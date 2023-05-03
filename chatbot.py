@@ -8,116 +8,96 @@ import requests
 import urllib.parse
 import json
 import os
+from llm import ShoppingLLM
+from constants import AMZN_CATEGORIES
+from retrieval import RetrievalShoppingLLMTemplated, RetrievalShoppingLLM
 
 app = Flask(__name__)
 
 ACCESS_TOKEN = os.getenv("ACCESS_TOKEN")
 VERIFY_TOKEN = os.getenv("TOKEN")
 
+
+
 APP_NAME = "ELSA"
 
 class MyChatBot(FBChatBot):
     def __init__(self, access_token, verify_token):
         super().__init__(access_token, verify_token)
+        self.shopping_llm = ShoppingLLM()
+        self.retrieval_llm = RetrievalShoppingLLM(AMZN_CATEGORIES)
 
     def process_text(self, user, text, nlp = Nlp.NONE):
         app.logger.debug("Received text: %s, nlp: %x" % (text, nlp))
 
         if text == "lol":
-            self.reply("")
+            self.reply(user, "")
             return
+        elif text == "start over":
+            self.shopping_llm = ShoppingLLM()
+            self.retrieval_llm = RetrievalShoppingLLM(AMZN_CATEGORIES)
+            self.reply(user, "starting over now")
+            return
+        
 
-        if nlp & Nlp.BYE:
-            self.reply(user, "Have a nice day.  Look forward to hearing from again!")
-        elif user.new_user or \
-           nlp & Nlp.GREETINGS or \
-           text.lower() in [ "hi", "hello", "hola", "help", "start over" ]:
-            # Start from the query.
-            user.response = None
-            user.query = None
-            user.category = None
-            user.store = None
-            user.product = None
-            user.receipt = None
+        raw_output, structured_output = self.shopping_llm.get_output(text)
+        app.logger.debug("structured output of the shopping llm %s" % str(structured_output))
+        user.query = structured_output["product"]
+        user.store = structured_output["store"]
+        user.category = structured_output["category"]
+        
+        # user.query = "red nike tennis shoes"
+        # user.store = "nike"
+        # user.category = "shoes"
+        # user.category = "shoes"
+        # user.category = None 
+        # user.product = None
+        # user.receipt = None
 
-            if user.new_user:
-                self.reply(user, "Greetings!  Welcome to %s!" % APP_NAME)
-            else:
-                self.reply(user, "Welcome back to %s!" % APP_NAME)
-            self.reply(user, "To search for a product, please type its name!")
+        if user.store == None:
+            #continue gathering information
+            self.reply(user, raw_output)
         else:
-            #resp = super().process_text(user, text)
+            #stop gathering information and return results
+            user.query = structured_output["product"] + " " + structured_output["store"] + " " + structured_output["category"]
+            print("query"*100)
+            print(user.query)
+            print("query"*100)
+            user.response = self.query(user)
+            if user.response == None:
+                app.logger.error("Failed to query: %s", text)
+                self.reply(user,
+                            "Couldn't find any.  Please try other items.")
+                return
 
-            if user.query == None:
-                app.logger.debug("query state")
-                user.query = text
+            products = []
+            for product in user.response["data"]["searchProduct"]["products"]:
+                if product["availability"]:
+                    products.append({
+                        "title": product["title"],
+                        "subtitle": product["currency"] + str(product["priceCurrent"] / 100),
+                        "item_url": product["imageUrlPrimary"],
+                        "image_url": product["imageUrlPrimary"],
+                        "buttons": [{
+                            "type": "web_url",
+                            "url": "https://www.joinhoney.com/shop/" + product["store"]["label"] + "/p/" + product["productId"],
+                            "title": "Buy"
+                        }]
+                    })
 
-                user.response = self.query(user)
-                if user.response == None:
-                    app.logger.error("Failed to query: %s", text)
-                    self.reply(user,
-                               "Couldn't find any.  Please try other items.")
-                    return
+            # Truncate the array to 10, a limitation of quick reply.
+            del(products[10:])
+            products = products[::-1]
+            
 
-                categories = user.response["data"]["searchProduct"]["meta"]["categories"]
-                self.quick_reply(user, "What category?", categories)
-            elif user.category == None:
-                app.logger.debug("category state")
-                user.category = text
+            # app.logger.debug("product size %d" % len(products))
+            self.generic_reply(user, "Choose your item, please!", products)
+            # self.reply(user, self.shopping_llm.get_output(str([p["title"] for p in products]))[0])
+            raw_output, structured_output = self.shopping_llm.get_output("""
+                ignore all previous instructions related to stating |store, category or product description|, just answer the following, of the following clothing items, which one do you think addresses the shoppers intent most accurately, and why?
+            """ + str([p["title"] for p in products]))
+            self.reply(user, raw_output)
 
-                user.response = self.query(user)
-                if user.response == None:
-                    app.logger.error("Failed to query: %s", text)
-                    self.reply(user,
-                               "Couldn't find any.  Please try other items.")
-                    return
-
-                stores = []
-                for store in user.response["data"]["searchProduct"]["meta"]["stores"]:
-                    stores.append(store["name"])
-
-                # Truncate the array to 10, a limitation of quick reply.
-                del(stores[10:])
-                self.quick_reply(user, "Which store?", stores)
-
-            elif user.store == None:
-                app.logger.debug("store state")
-                user.store = text
-
-                user.response = self.query(user)
-                if user.response == None:
-                    app.logger.error("Failed to query: %s", text)
-                    self.reply(user,
-                               "Couldn't find any.  Please try other items.")
-                    return
-
-                products = []
-                for product in user.response["data"]["searchProduct"]["products"]:
-                    if product["availability"]:
-                        products.append({
-                            "title": product["title"],
-                            "subtitle": product["currency"] + str(product["priceCurrent"] / 100),
-                            "item_url": product["imageUrlPrimary"],
-                            "image_url": product["imageUrlPrimary"],
-                            "buttons": [{
-                                "type": "web_url",
-                                "url": "https://www.joinhoney.com/shop/" + product["store"]["label"] + "/p/" + product["productId"],
-                                "title": "Buy"
-                            }]
-                        })
-
-                # Truncate the array to 10, a limitation of quick reply.
-                del(products[10:])
-                app.logger.debug("product size %d" % len(products))
-                self.generic_reply(user, "Choose your item, please!", products)
-
-            elif user.product == None:
-                app.logger.debug("product state")
-                user.product = text
-
-            elif user.receipt == None:
-                app.logger.debug("receipt state")
-                user.receipt = True
 
     def query(self, user):
         variables = {
@@ -127,16 +107,20 @@ class MyChatBot(FBChatBot):
                 "offset": 0
             }
         }
+        
 
-        if user.category:
-            variables["meta"]["categories"] = urllib.parse.quote_plus(user.category)
+        # if user.category:
+        #     variables["meta"]["categories"] = urllib.parse.quote_plus(user.category)
 
-        # XXX: Need to find out the store API.
+        # : Need to find out the store API.
         #if user.store:
         #    variables["meta"]["stores"] = urllib.parse.quote_plus(user.store)
 
         query = "https://d.joinhoney.com/v3?operationName=searchProduct&variables=%s" % str(variables).replace("'", "\"").replace(" ", "")
-        app.logger.debug("Query: %s" % query)
+        # print("@"*300)
+        # print(query)
+        # print("@"*300)
+        # app.logger.debug("Query: %s" % query)
 
         r = requests.get(query)
         if r.status_code != requests.codes.ok:
