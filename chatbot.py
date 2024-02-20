@@ -60,7 +60,7 @@ class MyChatBot(FBChatBot):
                     return
 
                 categories = user.response["data"]["searchProduct"]["meta"]["categories"]
-                self.quick_reply(user, "What category?", categories)
+                self.quick_reply(user, "Which category?", categories)
             elif user.category == None:
                 app.logger.debug("category state")
                 user.category = text
