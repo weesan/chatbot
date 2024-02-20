@@ -28,7 +28,7 @@ class MyChatBot(FBChatBot):
             return
 
         if nlp & Nlp.BYE:
-            self.reply(user, "Have a nice day.  Look forward to hearing from again!")
+            self.reply(user, "Have a nice day.  Look forward to hearing from you again!")
         elif user.new_user or \
            nlp & Nlp.GREETINGS or \
            text.lower() in [ "hi", "hello", "hola", "help", "start over" ]:
