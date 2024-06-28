@@ -40,9 +40,6 @@ Bot: Greetings!  Welcome to ELSA!
 Bot: To search for a product, please type its name!
 Me:  red nike tennis shoes
 
-Bot: Which store?
-Me:  Nike
-
 Bot: What category?
 Me:  Shoes
 
